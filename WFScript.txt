@@ -1,0 +1,154 @@
+#!/bin/bash
+
+#This script will extract data for you with volatility, bulk-extractor, binwalk, foremost & binutils.
+#Then it will extract the passwords of the collected data and will make a report of all extracted data. 
+
+start=$(date +%s)
+
+function AMIROOT(){
+	R=$(id -u)
+	if [ $R != "0" ]
+	then echo "Your user isn't root, For running the script, use root user" 
+	exit
+	else echo "Your are root, proceeding"
+	fi
+}
+AMIROOT
+
+function ALLTOOLS(){
+	R=$(whoami)
+	cd ~/hom
+	sudo apt update
+	sudo apt-get install bulk-extractor -y
+	sudo apt-get install binwalk -y
+	sudo apt-get install foremost -y
+	sudo apt-get install binutils -y
+	TEST=$(sudo find / -name volatility_2.6_lin64_standalone | awk -F / '{print $NF}') 
+	if [ -z $TEST ]
+	then sudo wget http://downloads.volatilityfoundation.org/releases/2.6/volatility_2.6_lin64_standalone.zip
+	unzip volatility_2.6_lin64_standalone.zip
+	echo "Volatility Installed"
+	else echo "volatility exists" && echo "forensic tools installed"
+	fi
+	B=$(which bulk_extractor) 
+	if [ $B == 0 ]
+	then sudo apt-get install bulk-extractor -y
+	else echo "bulk extractor already installed"
+	fi
+	C=$(which binwalk) 
+	if [ $C == 0 ]
+	then sudo apt-get install binwalk -y
+	else echo "binwalk already installed"
+	fi
+	D=$(which foremost) 
+	if [ $D == 0 ]
+	then sudo apt-get install foremost -y
+	else echo "foremost already installed"
+	fi
+	E=$(which strings) 
+	if [ $E == 0 ]
+	then sudo apt-get install binutils -y
+	else echo "binutils already installed"
+	fi
+}
+ALLTOOLS
+	
+function FILE(){
+	echo "[!] For extracting Data , you will need to Specify File in absolute path:"
+	read File
+	if [ -e $File ]
+	then echo "[+] File exists"
+	else echo "[X] File does not exist" | exit
+	fi
+	EXTENSION=$(echo $File | cut -d'.' -f2)
+}
+FILE
+	
+
+
+function EXTERMINATE (){
+	DESKTOPCHECK=$(sudo find / -name Desktop | head -n1)
+	echo "[+] Extracting info from given file into ~/Desktop/ExtractedData"
+	mkdir $DESKTOPCHECK/ExtractedData
+	sudo chmod -R 777 $DESKTOPCHECK/ExtractedData/
+	sudo bulk_extractor $File -o $DESKTOPCHECK/ExtractedData/bulk_extractor
+	binwalk -e $File --run-as=root -C $DESKTOPCHECK/ExtractedData/binwalk
+	foremost -i $File -o $DESKTOPCHECK/ExtractedData/foremost
+	ls
+	echo "[+] Now you have all data carved from $File"
+	cd $DESKTOPCHECK/ExtractedData/bulk_extractor
+	S=$(ls -sh packets.pcap | awk '{print $1}')
+	echo "[+] The network file is located at $DESKTOPCHECK/ExtractedData/bulk_extractor and it's size is $S"
+	strings $File > $DESKTOPCHECK/ExtractedData/strings_data.txt
+	echo "[+] Here are the exe files carved:"
+	ls "$DESKTOPCHECK/ExtractedData/foremost/exe"  
+	cat $DESKTOPCHECK/ExtractedData/strings_data.txt | grep -i password > $DESKTOPCHECK/ExtractedData/strings_pass.txt
+	echo "The Passwords found on $File are saved at $DESKTOPCHECK/ExtractedData/strings_pass.txt"
+	
+} 
+EXTERMINATE
+
+function Volatility (){
+	mkdir $DESKTOPCHECK/ExtractedData/VOL
+	PROFILE=$(cat .tmp | grep Suggested | awk '{print $4}' | sed 's/,//g')
+	cd ~/volatility_2.6_lin64_standalone/
+	echo "Imageinfo:" 
+	./volatility_2.6_lin64_standalone -f $File imageinfo
+	echo "running processes list:"
+	./volatility_2.6_lin64_standalone -f $File --profile=$PROFILE pslist
+	echo "running connection list:"
+	./volatility_2.6_lin64_standalone -f $File --profile=$PROFILE connections
+	echo "running registry list:"
+	./volatility_2.6_lin64_standalone -f $File --profile=$PROFILE hivelist
+	#./volatility_2.6_lin64_standalone -f $File imageinfo > $DESKTOPCHECK/ExtractedData/VOL
+	./volatility_2.6_lin64_standalone -f $File --profile=$PROFILE pslist >> $DESKTOPCHECK/ExtractedData/VOL/process
+	./volatility_2.6_lin64_standalone -f $File --profile=$PROFILE connections >> $DESKTOPCHECK/ExtractedData/VOL/network
+	./volatility_2.6_lin64_standalone -f $File --profile=$PROFILE hivelist >> $DESKTOPCHECK/ExtractedData/VOL/registry
+	echo "all volatility extracted information was saved in $DESKTOPCHECK/ExtractedData/VOL"
+}
+
+
+function CheckVolatility(){
+	cd ~/volatility_2.6_lin64_standalone/
+	./volatility_2.6_lin64_standalone -f $File imageinfo > .tmp 2>/dev/null
+	PROFILE=$(cat .tmp | grep Suggested | awk '{print $4}' | sed 's/,//g')
+	echo $PROFILE
+	if [ "$PROFILE" == "No" ]
+	then
+		echo "[!] No Profile was found"
+	else
+		echo "[+] Running Volatility" && Volatility
+	fi
+}
+CheckVolatility
+
+function Report(){
+	cd ~
+	echo "The number of files extracted using bulk-extractor is:"
+	ls "$DESKTOPCHECK/ExtractedData/bulk_extractor" |  wc -l 
+	echo "The number of files extracted using binwalk is:"
+	ls "$DESKTOPCHECK/ExtractedData/binwalk" | wc -l
+	echo "The number of files extracted using foremost is:"
+	ls "$DESKTOPCHECK/ExtractedData/foremost" |  wc -l 
+	ls "$DESKTOPCHECK/ExtractedData/bulk_extractor" |  wc -l > $DESKTOPCHECK/ExtractedData/Report.txt
+	ls "$DESKTOPCHECK/ExtractedData/bulk_extractor" >> $DESKTOPCHECK/ExtractedData/Report.txt
+	ls "$DESKTOPCHECK/ExtractedData/binwalk" | wc -l >> $DESKTOPCHECK/ExtractedData/Report.txt
+	ls "$DESKTOPCHECK/ExtractedData/binwalk" >> $DESKTOPCHECK/ExtractedData/Report.txt
+	ls "$DESKTOPCHECK/ExtractedData/foremost" |  wc -l >> $DESKTOPCHECK/ExtractedData/Report.txt
+	ls "$DESKTOPCHECK/ExtractedData/foremost" >> $DESKTOPCHECK/ExtractedData/Report.txt
+	echo "A List of all extracted files was saved in - $DESKTOPCHECK/ExtractedData/Report.txt"
+	end=$(date +%s)
+	runtime=$(($end - $start))
+	echo "script execution was $runtime seconds"
+}
+Report
+	
+
+function ZipData(){
+	cd ~
+	zip -rq $DESKTOPCHECK/EveryThing.zip $DESKTOPCHECK/ExtractedData
+	echo "The files have been zipped into EveryThing.zip on ~/Desktop"
+}
+ZipData
+
+echo "Thank you for using my script"
